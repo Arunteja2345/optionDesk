@@ -12,7 +12,6 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     res.status(401).json({ error: 'No token' })
     return
   }
-
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string; role: string }
     req.userId = payload.userId

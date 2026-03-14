@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { OptionChainResponse, IndexName } from '@shared/types'
+import  { OptionChainResponse,  IndexName } from '../types'
 
 const INDEX_MAP: Record<IndexName, string> = {
   nifty: 'nifty',

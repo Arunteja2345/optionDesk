@@ -2,7 +2,7 @@ import { db } from '../db/db'
 import { orders, positions, users } from '../db/schema'
 import { eq, and } from 'drizzle-orm'
 import { getCachedChain } from './OptionChainService'
-import { IndexName } from '@shared/types'
+import { IndexName } from '../types'
 
 export interface PlaceOrderInput {
   userId: string
