@@ -1,16 +1,17 @@
 import { useMemo } from 'react'
-import type { OptionStrike } from '@shared/types'
+import type { OptionStrike } from '../../../../../packages/shared/src/types'
 
 interface Props {
   strikes: OptionStrike[]
   underlyingLtp: number
   maxOI: number
   onTrade: (contract: any, side: 'BUY' | 'SELL') => void
-  onAddToBasket: (contract: any, side: 'BUY' | 'SELL') => void
+  onAddToBasket?: (contract: any, side: 'BUY' | 'SELL') => void
 }
 
 function getATMIndex(strikes: OptionStrike[], ltp: number) {
-  let min = Infinity, idx = 0
+  let min = Infinity
+  let idx = 0
   strikes.forEach((s, i) => {
     const diff = Math.abs(s.strikePrice / 100 - ltp)
     if (diff < min) {
@@ -22,8 +23,7 @@ function getATMIndex(strikes: OptionStrike[], ltp: number) {
 }
 
 function OIBar({ value, max }: { value: number; max: number }) {
-  const pct = Math.min(100, (value / max) * 100)
-
+  const pct = Math.min(100, max > 0 ? (value / max) * 100 : 0)
   return (
     <div className="w-16 h-1.5 bg-surface-3 rounded-full overflow-hidden">
       <div
@@ -39,9 +39,8 @@ export function OptionChainTable({
   underlyingLtp,
   maxOI,
   onTrade,
-  onAddToBasket
+  onAddToBasket,
 }: Props) {
-
   const atmIdx = useMemo(
     () => getATMIndex(strikes, underlyingLtp),
     [strikes, underlyingLtp]
@@ -52,20 +51,14 @@ export function OptionChainTable({
       <table className="w-full text-xs font-mono border-collapse">
         <thead>
           <tr className="bg-surface-3 text-gray-400 uppercase tracking-wider">
-
-            {/* CE side */}
             <th className="px-2 py-2 text-right">OI</th>
             <th className="px-2 py-2 text-right">IV</th>
             <th className="px-2 py-2 text-right">Delta</th>
             <th className="px-2 py-2 text-right">LTP</th>
             <th className="px-2 py-2 text-right">Chg%</th>
-
-            {/* Strike */}
             <th className="px-4 py-2 text-center bg-surface-2 text-white font-bold">
               Strike
             </th>
-
-            {/* PE side */}
             <th className="px-2 py-2 text-left">Chg%</th>
             <th className="px-2 py-2 text-left">LTP</th>
             <th className="px-2 py-2 text-left">Delta</th>
@@ -76,13 +69,11 @@ export function OptionChainTable({
 
         <tbody>
           {strikes.map((strike, i) => {
-
             const isATM = i === atmIdx
             const ce = strike.ce
             const pe = strike.pe
-
-            const ceChange = ce?.liveData.dayChangePerc ?? 0
-            const peChange = pe?.liveData.dayChangePerc ?? 0
+            const ceChange = ce?.liveData?.dayChangePerc ?? 0
+            const peChange = pe?.liveData?.dayChangePerc ?? 0
 
             return (
               <tr
@@ -91,45 +82,46 @@ export function OptionChainTable({
                   isATM ? 'bg-accent/10 border-accent/30' : ''
                 }`}
               >
-
                 {/* CE OI */}
                 <td className="px-2 py-1.5 text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <OIBar value={ce?.liveData.oi ?? 0} max={maxOI} />
-                    <span>
-                      {((ce?.liveData.oi ?? 0) / 1000).toFixed(0)}K
-                    </span>
+                    <OIBar value={ce?.liveData?.oi ?? 0} max={maxOI} />
+                    <span>{((ce?.liveData?.oi ?? 0) / 1000).toFixed(0)}K</span>
                   </div>
                 </td>
 
+                {/* CE IV */}
                 <td className="px-2 py-1.5 text-right text-gray-400">
-                  {ce?.greeks.iv?.toFixed(1)}%
+                  {ce?.greeks?.iv?.toFixed(1) ?? '—'}%
                 </td>
 
+                {/* CE Delta */}
                 <td className="px-2 py-1.5 text-right text-gray-400">
-                  {ce?.greeks.delta?.toFixed(3)}
+                  {ce?.greeks?.delta?.toFixed(3) ?? '—'}
                 </td>
 
-                {/* CE LTP with Basket Button */}
+                {/* CE LTP */}
                 <td className="px-2 py-1.5 text-right">
                   <div className="flex items-center justify-end gap-1">
-                    <button
-                      onClick={() => onAddToBasket(ce, 'BUY')}
-                      className="text-gray-500 hover:text-accent text-[10px] px-1"
-                      title="Add to basket"
-                    >
-                      +B
-                    </button>
-
+                    {onAddToBasket && (
+                      <button
+                        onClick={() => onAddToBasket(ce, 'BUY')}
+                        className="text-gray-500 hover:text-accent text-[10px] px-1 leading-none"
+                        title="Add to basket"
+                      >
+                        +B
+                      </button>
+                    )}
                     <span
                       className="cursor-pointer hover:text-buy font-semibold"
                       onClick={() => onTrade(ce, 'BUY')}
                     >
-                      {ce?.liveData.ltp?.toFixed(2)}
+                      {ce?.liveData?.ltp?.toFixed(2) ?? '—'}
                     </span>
                   </div>
                 </td>
 
+                {/* CE Change */}
                 <td
                   className={`px-2 py-1.5 text-right ${
                     ceChange >= 0 ? 'text-buy' : 'text-sell'
@@ -146,11 +138,8 @@ export function OptionChainTable({
                   }`}
                 >
                   {(strike.strikePrice / 100).toFixed(0)}
-
                   {isATM && (
-                    <span className="ml-1 text-[10px] text-accent">
-                      ATM
-                    </span>
+                    <span className="ml-1 text-[10px] text-accent">ATM</span>
                   )}
                 </td>
 
@@ -164,50 +153,44 @@ export function OptionChainTable({
                   {peChange.toFixed(2)}%
                 </td>
 
-                {/* PE LTP with Basket Button */}
+                {/* PE LTP */}
                 <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1">
-
-                    <button
-                      onClick={() => onAddToBasket(pe, 'BUY')}
-                      className="text-gray-500 hover:text-accent text-[10px] px-1"
-                      title="Add to basket"
-                    >
-                      +B
-                    </button>
-
+                    {onAddToBasket && (
+                      <button
+                        onClick={() => onAddToBasket(pe, 'BUY')}
+                        className="text-gray-500 hover:text-accent text-[10px] px-1 leading-none"
+                        title="Add to basket"
+                      >
+                        +B
+                      </button>
+                    )}
                     <span
                       className="cursor-pointer hover:text-sell font-semibold"
                       onClick={() => onTrade(pe, 'BUY')}
                     >
-                      {pe?.liveData.ltp?.toFixed(2)}
+                      {pe?.liveData?.ltp?.toFixed(2) ?? '—'}
                     </span>
-
                   </div>
                 </td>
 
+                {/* PE Delta */}
                 <td className="px-2 py-1.5 text-gray-400">
-                  {pe?.greeks.delta?.toFixed(3)}
+                  {pe?.greeks?.delta?.toFixed(3) ?? '—'}
                 </td>
 
+                {/* PE IV */}
                 <td className="px-2 py-1.5 text-gray-400">
-                  {pe?.greeks.iv?.toFixed(1)}%
+                  {pe?.greeks?.iv?.toFixed(1) ?? '—'}%
                 </td>
 
                 {/* PE OI */}
                 <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1">
-                    <span>
-                      {((pe?.liveData.oi ?? 0) / 1000).toFixed(0)}K
-                    </span>
-
-                    <OIBar
-                      value={pe?.liveData.oi ?? 0}
-                      max={maxOI}
-                    />
+                    <span>{((pe?.liveData?.oi ?? 0) / 1000).toFixed(0)}K</span>
+                    <OIBar value={pe?.liveData?.oi ?? 0} max={maxOI} />
                   </div>
                 </td>
-
               </tr>
             )
           })}
