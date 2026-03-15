@@ -4,7 +4,6 @@ import type { OptionStrike } from '@shared/types'
 interface Props {
   strikes: OptionStrike[]
   underlyingLtp: number
-  lotSize: number
   maxOI: number
   onTrade: (contract: any, side: 'BUY' | 'SELL') => void
 }
@@ -27,17 +26,9 @@ function OIBar({ value, max }: { value: number; max: number }) {
   )
 }
 
-function Cell({ value, flash }: { value: string; flash?: 'up' | 'down' | null }) {
-  return (
-    <span className={`transition-colors duration-500 ${
-      flash === 'up' ? 'text-buy' : flash === 'down' ? 'text-sell' : ''
-    }`}>
-      {value}
-    </span>
-  )
-}
 
-export function OptionChainTable({ strikes, underlyingLtp, lotSize, maxOI, onTrade }: Props) {
+
+export function OptionChainTable({ strikes, underlyingLtp, maxOI, onTrade }: Props) {
   const atmIdx = useMemo(() => getATMIndex(strikes, underlyingLtp), [strikes, underlyingLtp])
 
   return (
