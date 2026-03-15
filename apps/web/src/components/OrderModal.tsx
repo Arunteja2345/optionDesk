@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { api } from '../services/api'
-import { useAuthStore } from '../stores/useAuthStore'
 import toast from 'react-hot-toast'
+import { useAuthStore } from '../stores/useAuthStore'
+import { api } from '../services/api'
 
 interface Props {
   contract: {
@@ -49,6 +49,8 @@ export function OrderModal({
         limitPrice: orderType === 'LIMIT' ? limitPrice : undefined,
       })
       toast.success(`${side} order placed successfully!`)
+      const { data: summary } = await api.get('/api/portfolio/summary')
+      useAuthStore.getState().updateBalance(Number(summary.balance))
       onSuccess()
       onClose()
     } catch (err: any) {
