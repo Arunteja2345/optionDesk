@@ -42,6 +42,7 @@ console.log('14. poller loaded')
 
 import { startLimitOrderExecutor } from './workers/limitOrderExecutor'
 console.log('15. executor loaded')
+import { basketRouter } from './routes/basket'
 
 console.log('16. All imports done, setting up express...')
 
@@ -65,6 +66,7 @@ app.use('/api/orders', ordersRouter)
 app.use('/api/portfolio', portfolioRouter)
 app.use('/api/watchlist', watchlistRouter)
 app.use('/api/admin', adminRouter)
+app.use('/api/basket', basketRouter)
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: new Date() })
