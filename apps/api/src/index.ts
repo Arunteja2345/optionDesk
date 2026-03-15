@@ -33,6 +33,7 @@ console.log('11. portfolio router loaded')
 
 import { watchlistRouter } from './routes/watchlist'
 console.log('12. watchlist router loaded')
+import { balanceRouter } from './routes/balance'
 
 import { adminRouter } from './routes/admin'
 console.log('13. admin router loaded')
@@ -67,6 +68,7 @@ app.use('/api/portfolio', portfolioRouter)
 app.use('/api/watchlist', watchlistRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/basket', basketRouter)
+app.use('/api/balance', balanceRouter)
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: new Date() })
