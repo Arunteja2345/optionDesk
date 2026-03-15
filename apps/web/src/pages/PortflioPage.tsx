@@ -3,7 +3,7 @@ import { api } from '../services/api'
 import { useAuthStore } from '../stores/useAuthStore'
 import toast from 'react-hot-toast'
 import { Link } from 'react-router-dom'
-import { Navbar } from '../components/NavBar'
+import { Navbar } from '../components/Navbar'
 
 interface Position {
   id: string

@@ -3,7 +3,7 @@ import { useOptionChain } from '../hooks/useOptionChain'
 import { api } from '../services/api'
 import { OptionChainTable } from '../components/OptionChain/OptionChainTable'
 import { OrderModal } from '../components/OrderModal'
-import { Navbar } from '../components/NavBar'
+import { Navbar } from '../components/Navbar'
 
 interface TradeTarget {
   contract: any

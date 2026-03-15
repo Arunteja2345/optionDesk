@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import toast from 'react-hot-toast'
-import { Navbar } from '../components/NavBar'
+import { Navbar } from '../components/Navbar'
 
 interface Order {
   id: string
