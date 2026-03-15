@@ -3,6 +3,9 @@ import cors from 'cors'
 import helmet from 'helmet'
 import http from 'http'
 import { Server } from 'socket.io'
+
+console.log('Starting server...')
+
 import { authRouter } from './routes/auth'
 import { optionChainRouter } from './routes/optionchain'
 import { ordersRouter } from './routes/orders'
@@ -17,13 +20,13 @@ const server = http.createServer(app)
 
 export const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL,
+    origin: process.env.FRONTEND_URL || '*',
     credentials: true,
   },
 })
 
 app.use(helmet())
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }))
+app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }))
 app.use(express.json())
 
 app.use('/api/auth', authRouter)
@@ -37,9 +40,39 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: new Date() })
 })
 
-startPoller(io)
-startLimitOrderExecutor()
+const PORT = process.env.PORT || 3001
 
-server.listen(process.env.PORT || 3001, () =>
-  console.log(`API running on port ${process.env.PORT || 3001}`)
-)
+server.listen(PORT, () => {
+  console.log(`API running on port ${PORT}`)
+  console.log(`Environment: ${process.env.NODE_ENV}`)
+  console.log(`Frontend URL: ${process.env.FRONTEND_URL}`)
+
+  // Start background workers AFTER server is listening
+  try {
+    startPoller(io)
+    console.log('Poller started')
+  } catch (err) {
+    console.error('Poller failed to start:', err)
+  }
+
+  try {
+    startLimitOrderExecutor()
+    console.log('Limit order executor started')
+  } catch (err) {
+    console.error('Limit order executor failed to start:', err)
+  }
+})
+
+server.on('error', (err) => {
+  console.error('Server error:', err)
+  process.exit(1)
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err)
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason)
+})
