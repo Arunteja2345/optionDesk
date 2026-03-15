@@ -1,8 +1,8 @@
 import { db } from '../db/db'
 import { orders, positions, users } from '../db/schema'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { getCachedChain } from './OptionChainService'
-import { IndexName } from '../types'
+import type { IndexName } from '../types'
 
 export interface PlaceOrderInput {
   userId: string
@@ -81,11 +81,15 @@ async function executeOrder(
     .where(eq(orders.id, orderId))
 
   // Deduct / credit balance
-  await db.execute(
-    side === 'BUY'
-      ? `UPDATE users SET balance = balance - ${totalCost} WHERE id = '${userId}'`
-      : `UPDATE users SET balance = balance + ${totalCost} WHERE id = '${userId}'`
-  )
+  if (side === 'BUY') {
+    await db.update(users)
+      .set({ balance: sql`balance - ${totalCost}` })
+      .where(eq(users.id, userId))
+  } else {
+    await db.update(users)
+      .set({ balance: sql`balance + ${totalCost}` })
+      .where(eq(users.id, userId))
+  }
 
   // Upsert position
   const [existing] = await db.select().from(positions).where(

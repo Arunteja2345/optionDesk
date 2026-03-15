@@ -1,7 +1,7 @@
 import cron from 'node-cron'
 import { Server, Socket } from 'socket.io'
 import { fetchOptionChain, getCachedChain } from '../services/OptionChainService'
-import type { IndexName } from '@shared/types'
+import type { IndexName } from '../types'
 import { isMarketHours } from '../utils/marketHours'
 
 const activeRooms = new Map<string, Set<string>>()
