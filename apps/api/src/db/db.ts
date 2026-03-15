@@ -1,6 +1,12 @@
-import { drizzle } from 'drizzle-orm/neon-http'
-import { neon } from '@neondatabase/serverless'
+import { drizzle } from 'drizzle-orm/postgres-js'
+import postgres from 'postgres'
 import * as schema from './schema'
 
-const sql = neon(process.env.DATABASE_URL!)
-export const db = drizzle(sql, { schema })
+const client = postgres(process.env.DATABASE_URL!, {
+  ssl: 'require',
+  max: 1,           // keep connections minimal on free tier
+  idle_timeout: 20,
+  connect_timeout: 10,
+})
+
+export const db = drizzle(client, { schema })
