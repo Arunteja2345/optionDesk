@@ -24,6 +24,8 @@ const basketSchema = z.object({
 })
 
 // Preview basket — show margin, cost, payoff summary before executing
+// Replace the preview route in basket.ts
+
 router.post('/preview', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
   const result = basketSchema.safeParse(req.body)
   if (!result.success) {
@@ -34,6 +36,10 @@ router.post('/preview', authMiddleware, async (req: AuthRequest, res: Response):
   const { legs } = result.data
   let totalRequired = 0
   const legPreviews = []
+
+  // Separate buy and sell legs for spread margin netting
+  const sellLegs = legs.filter(l => l.side === 'SELL')
+  const buyLegs = legs.filter(l => l.side === 'BUY')
 
   for (const leg of legs) {
     const chain = getCachedChain(leg.indexName, leg.expiryDate)
@@ -46,13 +52,59 @@ router.post('/preview', authMiddleware, async (req: AuthRequest, res: Response):
     const lotSize = chain?.aggregatedDetails?.lotSize ?? 65
 
     const marginInfo = calculateMargin(leg.side, leg.quantity, lotSize, ltp, underlyingLtp)
-    totalRequired += marginInfo.requiredAmount
+
+    // For SELL legs in a spread: reduce margin by the long leg premium
+    // This mirrors how exchanges give hedge benefit
+    let adjustedRequired = marginInfo.requiredAmount
+
+    if (leg.side === 'SELL') {
+      // Find matching buy leg of same type (spread hedge)
+      const hedgeLeg = buyLegs.find(b =>
+        b.optionType === leg.optionType &&
+        b.indexName === leg.indexName &&
+        b.expiryDate === leg.expiryDate
+      )
+
+      if (hedgeLeg) {
+        const hedgeStrike = chain?.optionContracts?.find(
+          (s: any) => s.strikePrice === hedgeLeg.strikePrice
+        )
+        const hedgeContract = hedgeLeg.optionType === 'CE'
+          ? hedgeStrike?.ce
+          : hedgeStrike?.pe
+        const hedgeLtp = hedgeContract?.liveData?.ltp ?? 0
+        const hedgeQty = Math.min(leg.quantity, hedgeLeg.quantity)
+
+        // Hedge credit = difference between max loss of spread
+        // For a vertical spread: max loss = strike difference * lot size
+        const strikeDiff = Math.abs(leg.strikePrice - hedgeLeg.strikePrice) / 100
+        const maxSpreadLoss = strikeDiff * lotSize * hedgeQty
+
+        // Margin for spread = max possible loss (much lower than naked short)
+        const spreadMargin = Math.min(adjustedRequired, maxSpreadLoss)
+        adjustedRequired = spreadMargin
+      }
+    }
+
+    if (leg.side === 'BUY') {
+      // Buy legs: full premium cost regardless
+      adjustedRequired = marginInfo.requiredAmount
+    }
+
+    totalRequired += adjustedRequired
 
     legPreviews.push({
       ...leg,
       ltp,
       lotSize,
-      marginInfo,
+      marginInfo: {
+        ...marginInfo,
+        requiredAmount: adjustedRequired,
+        isHedged: leg.side === 'SELL' && buyLegs.some(b =>
+          b.optionType === leg.optionType &&
+          b.indexName === leg.indexName
+        ),
+      },
       displayStrike: leg.strikePrice / 100,
     })
   }
@@ -64,6 +116,7 @@ router.post('/preview', authMiddleware, async (req: AuthRequest, res: Response):
       buyLegs: legs.filter(l => l.side === 'BUY').length,
       sellLegs: legs.filter(l => l.side === 'SELL').length,
       totalLegs: legs.length,
+      isSpread: sellLegs.length > 0 && buyLegs.length > 0,
     }
   })
 })
