@@ -79,11 +79,11 @@ export function BasketPanel({ legs, onLegsChange, onClose }: Props) {
       const { data } = await axios.post(
         `${import.meta.env.VITE_API_URL}/api/basket/preview`,
         payload,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` } }  // ← check this line
       )
       setPreview(data)
     } catch (e: any) {
-      setError(e.response?.data?.error || 'Preview failed. Check your connection.')
+      setError(e.response?.data?.error || 'Preview failed')
     } finally {
       setLoading(false)
     }

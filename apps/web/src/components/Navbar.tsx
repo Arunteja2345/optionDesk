@@ -11,7 +11,7 @@ export function Navbar() {
 
   function handleLogout() {
     logout()
-    localStorage.removeItem('auth-token')
+    localStorage.removeItem('auth-store')  // was 'auth-token'
     navigate('/login')
   }
 
