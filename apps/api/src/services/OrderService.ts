@@ -1,25 +1,25 @@
 import { db } from '../db/db'
 import { orders, positions, users } from '../db/schema'
 import { eq, and, sql } from 'drizzle-orm'
-import { getCachedChain } from './OptionChainService'
+import { getCachedChain, fetchOptionChain } from './OptionChainService'
 import type { IndexName } from '../types'
 
 export interface PlaceOrderInput {
   userId: string
   contractId: string
   indexName: IndexName
-  strikePrice: number       // raw (divide by 100 to display)
+  strikePrice: number
   expiryDate: string
   optionType: 'CE' | 'PE'
   orderType: 'MARKET' | 'LIMIT'
   side: 'BUY' | 'SELL'
-  quantity: number          // number of LOTS
+  quantity: number
   limitPrice?: number
 }
 
 export interface MarginInfo {
-  requiredAmount: number    // what gets blocked
-  premiumReceived?: number  // only for SELL
+  requiredAmount: number
+  premiumReceived?: number
   spanMargin?: number
   exposureMargin?: number
   totalMargin?: number
@@ -38,14 +38,10 @@ export function calculateMargin(
     }
   }
 
-  // SELL — SPAN + Exposure (NSE index option margin approximation)
   const spanMargin = 0.05 * lotSize * underlyingLtp * lots
   const exposureMargin = 0.02 * lotSize * underlyingLtp * lots
   const totalMargin = spanMargin + exposureMargin
   const premiumReceived = lots * lotSize * ltp
-
-  // Net amount blocked = margin required minus premium received
-  // (because you receive the premium which offsets part of margin)
   const netBlock = Math.max(0, totalMargin - premiumReceived)
 
   return {
@@ -58,14 +54,24 @@ export function calculateMargin(
 }
 
 export async function placeOrder(input: PlaceOrderInput) {
-  const chain = getCachedChain(input.indexName, input.expiryDate)
+  // Try cache first, fetch live if not available
+  let chain = getCachedChain(input.indexName, input.expiryDate)
 
-  // Get current LTP from cache
+  if (!chain) {
+    try {
+      console.log(`Cache miss for ${input.indexName}:${input.expiryDate} — fetching live`)
+      chain = await fetchOptionChain(input.indexName, input.expiryDate)
+    } catch (err) {
+      console.error('Failed to fetch chain for order:', err)
+    }
+  }
+
   let currentLtp = 0
   let underlyingLtp = 0
 
   if (chain) {
     underlyingLtp = chain.underlyingLtp
+
     const strike = chain.optionContracts.find(
       (s: any) => s.strikePrice === input.strikePrice
     )
@@ -73,8 +79,15 @@ export async function placeOrder(input: PlaceOrderInput) {
     currentLtp = contract?.liveData?.ltp ?? 0
   }
 
+  // Last resort — use limit price if provided
+  if (currentLtp === 0 && input.limitPrice && input.limitPrice > 0) {
+    currentLtp = input.limitPrice
+  }
+
   if (currentLtp === 0 && input.orderType === 'MARKET') {
-    throw new Error('Cannot place market order — live price unavailable')
+    throw new Error(
+      `Cannot place market order — live price unavailable for strike ${input.strikePrice / 100} ${input.optionType}`
+    )
   }
 
   const executionPrice = input.orderType === 'MARKET'
@@ -82,6 +95,7 @@ export async function placeOrder(input: PlaceOrderInput) {
     : (input.limitPrice ?? currentLtp)
 
   const lotSize = chain?.aggregatedDetails?.lotSize ?? 65
+
   const marginInfo = calculateMargin(
     input.side,
     input.quantity,
@@ -90,7 +104,6 @@ export async function placeOrder(input: PlaceOrderInput) {
     underlyingLtp
   )
 
-  // Check user balance
   const [user] = await db
     .select({ balance: users.balance, id: users.id })
     .from(users)
@@ -106,7 +119,6 @@ export async function placeOrder(input: PlaceOrderInput) {
     )
   }
 
-  // Insert order record
   const [order] = await db.insert(orders).values({
     userId: input.userId,
     contractId: input.contractId,
@@ -121,9 +133,16 @@ export async function placeOrder(input: PlaceOrderInput) {
     status: input.orderType === 'MARKET' ? 'executed' : 'pending',
   }).returning()
 
-  // Execute immediately for market orders
   if (input.orderType === 'MARKET') {
-    await executeOrder(order.id, executionPrice, input.userId, input.side, marginInfo, input, lotSize)
+    await executeOrder(
+      order.id,
+      executionPrice,
+      input.userId,
+      input.side,
+      marginInfo,
+      input,
+      lotSize
+    )
   }
 
   return { order, marginInfo }
@@ -138,19 +157,16 @@ async function executeOrder(
   input: PlaceOrderInput,
   lotSize: number
 ) {
-  // Mark order as executed
   await db.update(orders)
     .set({ status: 'executed', executedAt: new Date() })
     .where(eq(orders.id, orderId))
 
-  // Deduct the correct amount from wallet
   await db.update(users)
     .set({ balance: sql`balance - ${marginInfo.requiredAmount}` })
     .where(eq(users.id, userId))
 
   const totalQtyUnits = input.quantity * lotSize
 
-  // Check for existing open position in same direction
   const [existing] = await db.select().from(positions).where(
     and(
       eq(positions.userId, userId),
@@ -161,7 +177,6 @@ async function executeOrder(
   )
 
   if (existing) {
-    // Average into existing position
     const newTotalQty = existing.quantity + totalQtyUnits
     const newAvgPrice = (
       (Number(existing.avgBuyPrice) * existing.quantity + price * totalQtyUnits)
@@ -171,7 +186,6 @@ async function executeOrder(
       .set({ quantity: newTotalQty, avgBuyPrice: String(newAvgPrice) })
       .where(eq(positions.id, existing.id))
   } else {
-    // New position
     await db.insert(positions).values({
       userId,
       contractId: input.contractId,
@@ -186,7 +200,6 @@ async function executeOrder(
   }
 }
 
-// Close a position — reverse the balance effect
 export async function closePosition(positionId: string, userId: string) {
   const [position] = await db.select().from(positions)
     .where(and(eq(positions.id, positionId), eq(positions.userId, userId)))
@@ -195,10 +208,22 @@ export async function closePosition(positionId: string, userId: string) {
     throw new Error('Position not found or already closed')
   }
 
-  const chain = getCachedChain(
+  let chain = getCachedChain(
     position.indexName as IndexName,
     position.expiryDate
   )
+
+  // Fetch live if not cached
+  if (!chain) {
+    try {
+      chain = await fetchOptionChain(
+        position.indexName as IndexName,
+        position.expiryDate
+      )
+    } catch (err) {
+      console.error('Failed to fetch chain for close:', err)
+    }
+  }
 
   const strike = chain?.optionContracts?.find(
     (s: any) => s.strikePrice === position.strikePrice
@@ -214,37 +239,26 @@ export async function closePosition(positionId: string, userId: string) {
   let pnl: number
 
   if (position.side === 'BUY') {
-    // Originally bought: paid qty * avgPrice
-    // Now selling at currentLtp
-    // Refund = what you get back = qty * currentLtp
     pnl = (currentLtp - avgPrice) * position.quantity
-    refund = currentLtp * position.quantity  // sell proceeds
+    refund = currentLtp * position.quantity
   } else {
-    // Originally sold (short): blocked margin = SPAN + Exposure - premium received
-    // Now buying back at currentLtp
-    // P&L for short = avgPrice - currentLtp (per unit)
     pnl = (avgPrice - currentLtp) * position.quantity
 
-    // Recalculate exactly what was originally blocked
     const spanMargin = 0.05 * lotSize * underlyingLtp * lots
     const exposureMargin = 0.02 * lotSize * underlyingLtp * lots
     const totalMargin = spanMargin + exposureMargin
     const premiumReceived = lots * lotSize * avgPrice
     const originallyBlocked = Math.max(0, totalMargin - premiumReceived)
 
-    // Refund = original blocked margin + profit (or - loss)
     refund = originallyBlocked + pnl
   }
 
-  // Never refund negative (loss larger than margin)
   const actualRefund = Math.max(0, refund)
 
-  // Credit back to wallet
   await db.update(users)
     .set({ balance: sql`balance + ${actualRefund}` })
     .where(eq(users.id, userId))
 
-  // Mark position closed
   await db.update(positions)
     .set({
       status: 'closed',
@@ -253,7 +267,6 @@ export async function closePosition(positionId: string, userId: string) {
     })
     .where(eq(positions.id, positionId))
 
-  // Fetch new balance to send back to frontend
   const [updated] = await db
     .select({ balance: users.balance })
     .from(users)

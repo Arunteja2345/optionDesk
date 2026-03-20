@@ -28,12 +28,11 @@ function OIBar({ value, max }: { value: number; max: number }) {
   )
 }
 
-// ITM = in the money, OTM = out of the money
 function getMoneyness(strike: OptionStrike, underlyingLtp: number) {
   const strikePrice = strike.strikePrice / 100
   return {
-    ceITM: strikePrice < underlyingLtp,  // CE is ITM when strike < spot
-    peITM: strikePrice > underlyingLtp,  // PE is ITM when strike > spot
+    ceITM: strikePrice < underlyingLtp,
+    peITM: strikePrice > underlyingLtp,
   }
 }
 
@@ -49,7 +48,6 @@ export function OptionChainTable({
     [strikes, underlyingLtp]
   )
 
-  // Auto-scroll to ATM row on load
   const atmRowRef = useRef<HTMLTableRowElement>(null)
   const hasScrolled = useRef(false)
 
@@ -60,7 +58,6 @@ export function OptionChainTable({
     }
   }, [strikes])
 
-  // Reset scroll flag when index/expiry changes
   useEffect(() => {
     hasScrolled.current = false
   }, [strikes.length])
@@ -75,7 +72,9 @@ export function OptionChainTable({
             <th className="px-2 py-2 text-right">Delta</th>
             <th className="px-2 py-2 text-right">LTP</th>
             <th className="px-2 py-2 text-right">Chg%</th>
-            <th className="px-4 py-2 text-center bg-surface-2 text-white font-bold">Strike</th>
+            <th className="px-4 py-2 text-center bg-surface-2 text-white font-bold">
+              Strike
+            </th>
             <th className="px-2 py-2 text-left">Chg%</th>
             <th className="px-2 py-2 text-left">LTP</th>
             <th className="px-2 py-2 text-left">Delta</th>
@@ -93,24 +92,17 @@ export function OptionChainTable({
             const ceChange = ce?.liveData?.dayChangePerc ?? 0
             const peChange = pe?.liveData?.dayChangePerc ?? 0
 
-            // Row background:
-            // ATM = blue tint
-            // ITM CE side = slightly lighter (more active)
-            // OTM = darker/muted
+            // Merge strikePrice into contract objects so downstream
+            // handlers always have access to it
+            const ceWithStrike = ce ? { ...ce, strikePrice: strike.strikePrice } : ce
+            const peWithStrike = pe ? { ...pe, strikePrice: strike.strikePrice } : pe
+
             const rowBg = isATM
               ? 'bg-accent/10 border-accent/30'
               : 'border-surface-3'
 
-            // Cell backgrounds for ITM vs OTM
-            const ceITMClass = ceITM
-              ? 'bg-[#1a1f1a]'   // slightly warm dark — CE ITM
-              : 'bg-[#111111]'   // darker — CE OTM
-
-            const peITMClass = peITM
-              ? 'bg-[#1a1a1f]'   // slightly cool dark — PE ITM
-              : 'bg-[#111111]'   // darker — PE OTM
-
-            // Text opacity: ITM = full, OTM = muted
+            const ceITMClass = ceITM ? 'bg-[#1a1f1a]' : 'bg-[#111111]'
+            const peITMClass = peITM ? 'bg-[#1a1a1f]' : 'bg-[#111111]'
             const ceTextClass = ceITM ? 'text-gray-200' : 'text-gray-500'
             const peTextClass = peITM ? 'text-gray-200' : 'text-gray-500'
 
@@ -149,7 +141,7 @@ export function OptionChainTable({
                   <div className="flex items-center justify-end gap-1">
                     {onAddToBasket && (
                       <button
-                        onClick={() => onAddToBasket(ce, 'BUY')}
+                        onClick={() => onAddToBasket(ceWithStrike, 'BUY')}
                         className="text-gray-600 hover:text-accent text-[10px] px-1"
                         title="Add to basket"
                       >
@@ -160,7 +152,7 @@ export function OptionChainTable({
                       className={`cursor-pointer hover:text-buy font-semibold ${
                         ceITM ? 'text-white' : 'text-gray-500'
                       }`}
-                      onClick={() => onTrade(ce, 'BUY')}
+                      onClick={() => onTrade(ceWithStrike, 'BUY')}
                     >
                       {ce?.liveData?.ltp?.toFixed(2) ?? '—'}
                     </span>
@@ -174,7 +166,7 @@ export function OptionChainTable({
                   {ceChange >= 0 ? '+' : ''}{ceChange.toFixed(2)}%
                 </td>
 
-                {/* Strike — always bright */}
+                {/* Strike */}
                 <td className={`px-4 py-1.5 text-center font-bold text-sm bg-surface-2 ${
                   isATM ? 'text-accent' : 'text-white'
                 }`}>
@@ -196,7 +188,7 @@ export function OptionChainTable({
                   <div className="flex items-center gap-1">
                     {onAddToBasket && (
                       <button
-                        onClick={() => onAddToBasket(pe, 'BUY')}
+                        onClick={() => onAddToBasket(peWithStrike, 'BUY')}
                         className="text-gray-600 hover:text-accent text-[10px] px-1"
                         title="Add to basket"
                       >
@@ -207,7 +199,7 @@ export function OptionChainTable({
                       className={`cursor-pointer hover:text-sell font-semibold ${
                         peITM ? 'text-white' : 'text-gray-500'
                       }`}
-                      onClick={() => onTrade(pe, 'BUY')}
+                      onClick={() => onTrade(peWithStrike, 'BUY')}
                     >
                       {pe?.liveData?.ltp?.toFixed(2) ?? '—'}
                     </span>
