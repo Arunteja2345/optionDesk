@@ -72,23 +72,15 @@ router.get('/:index/:expiry', async (req: Request, res: Response): Promise<void>
 // GET /api/optionchain/:index
 router.get('/:index', async (req: Request, res: Response): Promise<void> => {
   const index = req.params.index as IndexName
-  const expiry = req.query.expiry as string
-
-  if (!expiry) {
-    res.status(400).json({ error: 'expiry query param required' })
-    return
-  }
-
   try {
-    const cached = getCachedChain(index, expiry)
-    if (cached) { res.json(cached); return }
-    const data = await fetchOptionChain(index, expiry)
+    // Fetch without expiry — Groww returns current expiry data
+    const data = await fetchOptionChain(index, '')
     res.json(data)
-  } catch (err: any) {
-    console.error('option chain error:', err.message)
-    res.status(500).json({ error: 'Failed to fetch option chain' })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
   }
 })
+
 
 export { router as optionChainRouter }
 

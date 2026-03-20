@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
+import axios from 'axios'
 import { useOptionChain } from '../hooks/useOptionChain'
 import { OptionChainTable } from '../components/OptionChain/OptionChainTable'
 import { OrderModal } from '../components/OrderModal'
-// import { BasketPanel, BasketLeg } from '../components/Basket/BasketPanel'
 import { BasketPanel } from '../components/Basket/BasketPanel'
 import type { BasketLeg } from '../components/Basket/BasketPanel'
-
 import { useAuthStore } from '../stores/useAuthStore'
 
 type IndexName = 'nifty' | 'banknifty' | 'sensex'
@@ -20,6 +19,8 @@ export function OptionChainPage() {
   const { user } = useAuthStore()
   const [selectedIndex, setSelectedIndex] = useState<IndexName>('nifty')
   const [selectedExpiry, setSelectedExpiry] = useState('')
+  const [expiries, setExpiries] = useState<string[]>([])
+  const [loadingExpiries, setLoadingExpiries] = useState(false)
   const [orderModal, setOrderModal] = useState<{
     contract: any
     side: 'BUY' | 'SELL'
@@ -31,30 +32,42 @@ export function OptionChainPage() {
   const [basketOpen, setBasketOpen] = useState(false)
   const [basketLegs, setBasketLegs] = useState<BasketLeg[]>([])
 
-  const { data, connected, lastUpdated } = useOptionChain(selectedIndex, selectedExpiry)
-
-  // Add at top of OptionChainPage component, before the return
-  useEffect(() => {
-    console.log('ENV CHECK:', {
-      api: import.meta.env.VITE_API_URL,
-      ws: import.meta.env.VITE_WS_URL,
-      index: selectedIndex,
-      expiry: selectedExpiry,
-    })
-  }, [selectedIndex, selectedExpiry])
-  // Set default expiry when data loads
-  useEffect(() => {
-    if (data && !selectedExpiry) {
-      setSelectedExpiry(data.aggregatedDetails.currentExpiry)
-    }
-  }, [data, selectedExpiry])
-
-  // Reset expiry when index changes
+  // Step 1 — fetch expiries via HTTP when index changes
+  // This runs FIRST, sets expiry, then the WebSocket hook fires
   useEffect(() => {
     setSelectedExpiry('')
+    setExpiries([])
+    setLoadingExpiries(true)
+
+    axios.get(`${import.meta.env.VITE_API_URL}/api/optionchain/${selectedIndex}`)
+      .then(({ data }) => {
+        const dates: string[] = data?.aggregatedDetails?.expiryDates ?? []
+        const current: string = data?.aggregatedDetails?.currentExpiry ?? dates[0] ?? ''
+        setExpiries(dates)
+        setSelectedExpiry(current)  // ← this triggers the WebSocket to subscribe
+      })
+      .catch(err => {
+        console.error('Failed to load expiries:', err)
+        // Hardcode a fallback expiry so we don't get stuck
+        const fallback = '2026-04-28'
+        setExpiries([fallback])
+        setSelectedExpiry(fallback)
+      })
+      .finally(() => setLoadingExpiries(false))
   }, [selectedIndex])
 
-  const expiries = data?.aggregatedDetails?.expiryDates ?? []
+  // Step 2 — WebSocket hook only runs when expiry is set
+  const { data, connected, lastUpdated } = useOptionChain(
+    selectedIndex,
+    selectedExpiry   // empty string until Step 1 completes → hook does nothing
+  )
+
+  // When new data arrives, sync expiry list
+  useEffect(() => {
+    if (data?.aggregatedDetails?.expiryDates?.length) {
+      setExpiries(data.aggregatedDetails.expiryDates)
+    }
+  }, [data])
 
   const handleTrade = (contract: any, side: 'BUY' | 'SELL') => {
     if (!contract) return
@@ -75,9 +88,7 @@ export function OptionChainPage() {
       alert('Maximum 4 legs allowed in a basket')
       return
     }
-
     const optionType = contract.growwContractId?.includes('CE') ? 'CE' : 'PE'
-
     const newLeg: BasketLeg = {
       id: crypto.randomUUID(),
       contractId: contract.growwContractId ?? '',
@@ -90,7 +101,6 @@ export function OptionChainPage() {
       quantity: 1,
       ltp: contract.liveData?.ltp ?? 0,
     }
-
     setBasketLegs(prev => [...prev, newLeg])
     setBasketOpen(true)
   }
@@ -104,8 +114,10 @@ export function OptionChainPage() {
         {/* Index selector */}
         <select
           value={selectedIndex}
-          onChange={e => setSelectedIndex(e.target.value as IndexName)}
-          className="bg-surface-2 border border-surface-3 text-white text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer hover:border-accent/50 transition-colors"
+          onChange={e => {
+            setSelectedIndex(e.target.value as IndexName)
+          }}
+          className="bg-surface-2 border border-surface-3 text-white text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer"
         >
           {(Object.keys(INDEX_LABELS) as IndexName[]).map(idx => (
             <option key={idx} value={idx}>{INDEX_LABELS[idx]}</option>
@@ -116,8 +128,8 @@ export function OptionChainPage() {
         <select
           value={selectedExpiry}
           onChange={e => setSelectedExpiry(e.target.value)}
-          disabled={expiries.length === 0}
-          className="bg-surface-2 border border-surface-3 text-white text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer hover:border-accent/50 transition-colors disabled:opacity-40"
+          disabled={loadingExpiries || expiries.length === 0}
+          className="bg-surface-2 border border-surface-3 text-white text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer disabled:opacity-40"
         >
           {expiries.length === 0 && (
             <option value="">Loading...</option>
@@ -153,7 +165,11 @@ export function OptionChainPage() {
           </span>
           {lastUpdated && (
             <span className="text-gray-600 text-[10px]">
-              · {lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              · {lastUpdated.toLocaleTimeString('en-IN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              })}
             </span>
           )}
         </div>
@@ -175,15 +191,19 @@ export function OptionChainPage() {
 
       {/* Option chain table */}
       <div className="flex-1 overflow-hidden">
-        {!data && (
+        {!selectedExpiry || !data ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500">
             <div className="w-6 h-6 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
             <span className="text-sm">
-              {connected ? 'Loading option chain...' : 'Connecting to live feed...'}
+              {!selectedExpiry
+                ? 'Loading expiries...'
+                : connected
+                  ? 'Loading option chain...'
+                  : 'Connecting to live feed...'
+              }
             </span>
           </div>
-        )}
-        {data && (
+        ) : (
           <OptionChainTable
             strikes={data.optionContracts}
             underlyingLtp={data.underlyingLtp}
