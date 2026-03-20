@@ -18,7 +18,7 @@ interface Order {
   executedAt: string | null
 }
 
-export function OrdersPage() {
+export function OrderPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'executed' | 'pending' | 'cancelled'>('all')
