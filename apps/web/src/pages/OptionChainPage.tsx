@@ -33,6 +33,15 @@ export function OptionChainPage() {
 
   const { data, connected, lastUpdated } = useOptionChain(selectedIndex, selectedExpiry)
 
+  // Add at top of OptionChainPage component, before the return
+  useEffect(() => {
+    console.log('ENV CHECK:', {
+      api: import.meta.env.VITE_API_URL,
+      ws: import.meta.env.VITE_WS_URL,
+      index: selectedIndex,
+      expiry: selectedExpiry,
+    })
+  }, [selectedIndex, selectedExpiry])
   // Set default expiry when data loads
   useEffect(() => {
     if (data && !selectedExpiry) {
