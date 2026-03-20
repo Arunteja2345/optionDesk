@@ -47,6 +47,8 @@ import { basketRouter } from './routes/basket'
 
 console.log('16. All imports done, setting up express...')
 
+import { positionsRouter } from './routes/positions'
+
 const app = express()
 const server = http.createServer(app)
 
@@ -69,6 +71,7 @@ app.use('/api/watchlist', watchlistRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/basket', basketRouter)
 app.use('/api/balance', balanceRouter)
+app.use('/api/positions', positionsRouter)
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: new Date() })

@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
-import { api } from '../services/api'
+import { useEffect, useState, useRef } from 'react'
+import axios from 'axios'
+import { io, Socket } from 'socket.io-client'
 import { useAuthStore } from '../stores/useAuthStore'
-import toast from 'react-hot-toast'
-import { Link } from 'react-router-dom'
-import { Navbar } from '../components/Navbar'
+import { getLiveLtp, calcUnrealizedPnL } from '../hooks/useLivePnL'
+import type { OptionChainResponse } from '../../../../packages/shared/src/types'
 
 interface Position {
   id: string
@@ -11,133 +11,229 @@ interface Position {
   indexName: string
   strikePrice: number
   expiryDate: string
-  optionType: string
+  optionType: 'CE' | 'PE'
+  side: 'BUY' | 'SELL'
   quantity: number
   avgBuyPrice: string
-  side: string
   status: string
-  openedAt: string
-}
-
-interface Summary {
-  balance: string
-  name: string
-  openPositionsCount: number
-  realizedPnl: number
-  openPositions: Position[]
 }
 
 export function PortfolioPage() {
-  const [summary, setSummary] = useState<Summary | null>(null)
+  const { token, user, updateBalance } = useAuthStore()
+  const [positions, setPositions] = useState<Position[]>([])
+  const [chainData, setChainData] = useState<Record<string, OptionChainResponse>>({})
   const [loading, setLoading] = useState(true)
-  const user = useAuthStore(s => s.user)
+  const socketRef = useRef<Socket | null>(null)
 
-  async function fetchSummary() {
-    try {
-      const { data } = await api.get('/api/portfolio/summary')
-      setSummary(data)
-    } catch {
-      toast.error('Failed to load portfolio')
-    } finally {
+  // Fetch open positions
+  useEffect(() => {
+    axios.get(`${import.meta.env.VITE_API_URL}/api/positions`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(({ data }) => {
+      setPositions(data)
       setLoading(false)
-    }
-  }
+    }).catch(() => setLoading(false))
+  }, [token])
 
-  async function closePosition(id: string) {
+  // Subscribe to live data for each unique index+expiry combination
+  useEffect(() => {
+    if (positions.length === 0) return
+
+    const socket = io(import.meta.env.VITE_WS_URL, {
+      transports: ['websocket']
+    })
+    socketRef.current = socket
+
+    // Get unique rooms from open positions
+    const rooms = [...new Set(
+      positions
+        .filter(p => p.status === 'open')
+        .map(p => `${p.indexName}:${p.expiryDate}`)
+    )]
+
+    socket.on('connect', () => {
+      rooms.forEach(room => {
+        const [index, expiry] = room.split(':')
+        socket.emit('subscribe', { index, expiry })
+      })
+    })
+
+    socket.on('option-chain-update', ({ room, data }: {
+      room: string
+      data: OptionChainResponse
+    }) => {
+      setChainData(prev => ({ ...prev, [room]: data }))
+    })
+
+    return () => {
+      rooms.forEach(room => {
+        const [index, expiry] = room.split(':')
+        socket.emit('unsubscribe', { index, expiry })
+      })
+      socket.disconnect()
+    }
+  }, [positions])
+
+  const handleClose = async (positionId: string) => {
     try {
-      const { data } = await api.post(`/api/portfolio/positions/${id}/close`)
-      toast.success(`Position closed. P&L: ₹${data.pnl?.toFixed(2)}`)
-      fetchSummary()
-    } catch {
-      toast.error('Failed to close position')
+      const { data } = await axios.post(
+        `${import.meta.env.VITE_API_URL}/api/positions/${positionId}/close`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      // Remove closed position from list
+      setPositions(prev => prev.filter(p => p.id !== positionId))
+      // Update balance in navbar
+      if (data.newBalance) updateBalance(data.newBalance)
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'Failed to close position')
     }
   }
 
-  useEffect(() => { fetchSummary() }, [])
+  const totalUnrealizedPnL = positions
+    .filter(p => p.status === 'open')
+    .reduce((sum, position) => {
+      const ltp = getLiveLtp(position, chainData)
+      return sum + (ltp > 0 ? calcUnrealizedPnL(position, ltp) : 0)
+    }, 0)
 
-  if (loading) return (
-    <div className="min-h-screen bg-black flex items-center justify-center text-gray-400">
-      Loading portfolio...
-    </div>
-  )
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-gray-400">
+        Loading positions...
+      </div>
+    )
+  }
+
+  const openPositions = positions.filter(p => p.status === 'open')
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <Navbar />
-      <div className="max-w-6xl mx-auto p-4 space-y-6">
+    <div className="p-4 max-w-7xl mx-auto space-y-4">
 
-        {/* Stats cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard label="Available Balance" value={`₹${Number(summary?.balance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`} color="text-buy" />
-          <StatCard label="Open Positions" value={String(summary?.openPositionsCount ?? 0)} color="text-white" />
-          <StatCard label="Realized P&L" value={`₹${(summary?.realizedPnl ?? 0).toFixed(2)}`} color={(summary?.realizedPnl ?? 0) >= 0 ? 'text-buy' : 'text-sell'} />
-          <StatCard label="Account" value={user?.name ?? ''} color="text-accent" />
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-surface-2 border border-surface-3 rounded-lg p-4">
+          <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">Available Balance</p>
+          <p className="text-white font-mono text-xl font-semibold">
+            ₹{Number(user?.balance ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+          </p>
         </div>
 
-        {/* Open positions */}
-        <div className="bg-surface rounded-lg border border-surface-3">
-          <div className="px-4 py-3 border-b border-surface-3 flex items-center justify-between">
-            <h2 className="font-semibold text-white">Open Positions</h2>
-            <button onClick={fetchSummary} className="text-xs text-accent hover:underline">Refresh</button>
-          </div>
+        <div className="bg-surface-2 border border-surface-3 rounded-lg p-4">
+          <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">Live P&L</p>
+          <p className={`font-mono text-xl font-semibold ${
+            totalUnrealizedPnL >= 0 ? 'text-buy' : 'text-sell'
+          }`}>
+            {totalUnrealizedPnL >= 0 ? '+' : ''}
+            ₹{totalUnrealizedPnL.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+          </p>
+        </div>
 
-          {summary?.openPositions.length === 0 ? (
-            <div className="p-8 text-center text-gray-500 text-sm">
-              No open positions. <Link to="/" className="text-accent">Trade now →</Link>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs font-mono">
-                <thead>
-                  <tr className="bg-surface-3 text-gray-400 uppercase">
-                    <th className="px-3 py-2 text-left">Contract</th>
-                    <th className="px-3 py-2 text-right">Qty</th>
-                    <th className="px-3 py-2 text-right">Avg Price</th>
-                    <th className="px-3 py-2 text-right">Side</th>
-                    <th className="px-3 py-2 text-right">Expiry</th>
-                    <th className="px-3 py-2 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary?.openPositions.map(pos => (
-                    <tr key={pos.id} className="border-t border-surface-3 hover:bg-surface-2">
-                      <td className="px-3 py-2">
-                        <div className="text-white">{pos.indexName.toUpperCase()} {(pos.strikePrice / 100).toFixed(0)} {pos.optionType}</div>
-                        <div className="text-gray-500 text-[10px]">{pos.contractId}</div>
-                      </td>
-                      <td className="px-3 py-2 text-right text-white">{pos.quantity}</td>
-                      <td className="px-3 py-2 text-right text-white">₹{Number(pos.avgBuyPrice).toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${pos.side === 'BUY' ? 'bg-buy/20 text-buy' : 'bg-sell/20 text-sell'}`}>
-                          {pos.side}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-400">{pos.expiryDate}</td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          onClick={() => closePosition(pos.id)}
-                          className="px-2 py-1 rounded bg-sell/20 text-sell hover:bg-sell/40 text-[10px] font-semibold"
-                        >
-                          Close
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="bg-surface-2 border border-surface-3 rounded-lg p-4">
+          <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">Open Positions</p>
+          <p className="text-white font-mono text-xl font-semibold">{openPositions.length}</p>
         </div>
       </div>
-    </div>
-  )
-}
 
-function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div className="bg-surface rounded-lg border border-surface-3 p-4">
-      <div className="text-xs text-gray-400 mb-1">{label}</div>
-      <div className={`text-lg font-bold font-mono ${color}`}>{value}</div>
+      {/* Positions table */}
+      <div className="bg-surface-2 border border-surface-3 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-surface-3">
+          <h2 className="text-white font-semibold text-sm">Open Positions</h2>
+        </div>
+
+        {openPositions.length === 0 ? (
+          <div className="text-center text-gray-500 py-16 text-sm">
+            No open positions
+          </div>
+        ) : (
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="text-gray-400 uppercase tracking-wider border-b border-surface-3">
+                <th className="px-4 py-2 text-left">Contract</th>
+                <th className="px-4 py-2 text-right">Qty</th>
+                <th className="px-4 py-2 text-right">Avg Price</th>
+                <th className="px-4 py-2 text-right">LTP</th>
+                <th className="px-4 py-2 text-right">P&L</th>
+                <th className="px-4 py-2 text-right">P&L %</th>
+                <th className="px-4 py-2 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {openPositions.map(position => {
+                const ltp = getLiveLtp(position, chainData)
+                const pnl = ltp > 0 ? calcUnrealizedPnL(position, ltp) : 0
+                const avg = Number(position.avgBuyPrice)
+                const pnlPct = avg > 0 ? ((pnl / (avg * position.quantity)) * 100) : 0
+                const isProfit = pnl >= 0
+
+                return (
+                  <tr
+                    key={position.id}
+                    className="border-b border-surface-3 hover:bg-surface transition-colors"
+                  >
+                    <td className="px-4 py-2.5">
+                      <div>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mr-1.5 ${
+                          position.side === 'BUY'
+                            ? 'bg-buy/20 text-buy'
+                            : 'bg-sell/20 text-sell'
+                        }`}>
+                          {position.side}
+                        </span>
+                        <span className="text-white">
+                          {position.indexName.toUpperCase()} {(position.strikePrice / 100).toFixed(0)} {position.optionType}
+                        </span>
+                        <span className="text-gray-500 ml-2 text-[10px]">
+                          {position.expiryDate}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-2.5 text-right text-gray-300">
+                      {position.quantity}
+                    </td>
+
+                    <td className="px-4 py-2.5 text-right text-gray-300">
+                      ₹{avg.toFixed(2)}
+                    </td>
+
+                    <td className="px-4 py-2.5 text-right">
+                      <span className={ltp > 0 ? 'text-white' : 'text-gray-500'}>
+                        {ltp > 0 ? `₹${ltp.toFixed(2)}` : '—'}
+                      </span>
+                    </td>
+
+                    <td className={`px-4 py-2.5 text-right font-semibold ${
+                      isProfit ? 'text-buy' : 'text-sell'
+                    }`}>
+                      {ltp > 0 ? (
+                        <>{isProfit ? '+' : ''}₹{Math.abs(pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</>
+                      ) : '—'}
+                    </td>
+
+                    <td className={`px-4 py-2.5 text-right ${
+                      isProfit ? 'text-buy' : 'text-sell'
+                    }`}>
+                      {ltp > 0 ? (
+                        <>{isProfit ? '+' : ''}{pnlPct.toFixed(2)}%</>
+                      ) : '—'}
+                    </td>
+
+                    <td className="px-4 py-2.5 text-center">
+                      <button
+                        onClick={() => handleClose(position.id)}
+                        className="px-3 py-1 bg-surface-3 hover:bg-sell/20 hover:border-sell/40 hover:text-sell border border-surface-3 text-gray-400 rounded text-[11px] transition-colors"
+                      >
+                        Close
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   )
 }

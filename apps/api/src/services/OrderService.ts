@@ -195,36 +195,53 @@ export async function closePosition(positionId: string, userId: string) {
     throw new Error('Position not found or already closed')
   }
 
-  const chain = getCachedChain(position.indexName as IndexName, position.expiryDate)
+  const chain = getCachedChain(
+    position.indexName as IndexName,
+    position.expiryDate
+  )
+
   const strike = chain?.optionContracts?.find(
     (s: any) => s.strikePrice === position.strikePrice
   )
   const contract = position.optionType === 'CE' ? strike?.ce : strike?.pe
   const currentLtp = contract?.liveData?.ltp ?? Number(position.avgBuyPrice)
-
+  const avgPrice = Number(position.avgBuyPrice)
   const lotSize = chain?.aggregatedDetails?.lotSize ?? 65
   const lots = position.quantity / lotSize
+  const underlyingLtp = chain?.underlyingLtp ?? 0
 
-  let pnl: number
   let refund: number
+  let pnl: number
 
   if (position.side === 'BUY') {
-    // Bought originally — now selling to close
-    pnl = (currentLtp - Number(position.avgBuyPrice)) * position.quantity
-    // Return original cost + profit/loss
-    refund = Number(position.avgBuyPrice) * position.quantity + pnl
+    // Originally bought: paid qty * avgPrice
+    // Now selling at currentLtp
+    // Refund = what you get back = qty * currentLtp
+    pnl = (currentLtp - avgPrice) * position.quantity
+    refund = currentLtp * position.quantity  // sell proceeds
   } else {
-    // Sold originally (short) — buying back to close
-    pnl = (Number(position.avgBuyPrice) - currentLtp) * position.quantity
-    // Refund the blocked margin + realized P&L
-    const underlyingLtp = chain?.underlyingLtp ?? 0
-    const originalMargin = calculateMargin('SELL', lots, lotSize, Number(position.avgBuyPrice), underlyingLtp)
-    refund = originalMargin.requiredAmount + pnl
+    // Originally sold (short): blocked margin = SPAN + Exposure - premium received
+    // Now buying back at currentLtp
+    // P&L for short = avgPrice - currentLtp (per unit)
+    pnl = (avgPrice - currentLtp) * position.quantity
+
+    // Recalculate exactly what was originally blocked
+    const spanMargin = 0.05 * lotSize * underlyingLtp * lots
+    const exposureMargin = 0.02 * lotSize * underlyingLtp * lots
+    const totalMargin = spanMargin + exposureMargin
+    const premiumReceived = lots * lotSize * avgPrice
+    const originallyBlocked = Math.max(0, totalMargin - premiumReceived)
+
+    // Refund = original blocked margin + profit (or - loss)
+    refund = originallyBlocked + pnl
   }
+
+  // Never refund negative (loss larger than margin)
+  const actualRefund = Math.max(0, refund)
 
   // Credit back to wallet
   await db.update(users)
-    .set({ balance: sql`balance + ${Math.max(0, refund)}` })
+    .set({ balance: sql`balance + ${actualRefund}` })
     .where(eq(users.id, userId))
 
   // Mark position closed
@@ -236,5 +253,16 @@ export async function closePosition(positionId: string, userId: string) {
     })
     .where(eq(positions.id, positionId))
 
-  return { pnl, closePrice: currentLtp }
+  // Fetch new balance to send back to frontend
+  const [updated] = await db
+    .select({ balance: users.balance })
+    .from(users)
+    .where(eq(users.id, userId))
+
+  return {
+    pnl,
+    closePrice: currentLtp,
+    refund: actualRefund,
+    newBalance: Number(updated.balance),
+  }
 }
