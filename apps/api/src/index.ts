@@ -72,7 +72,8 @@ app.use('/api/admin', adminRouter)
 app.use('/api/basket', basketRouter)
 app.use('/api/balance', balanceRouter)
 app.use('/api/positions', positionsRouter)
-
+// import { watchlistRouter } from './routes/watchlist'
+// app.use('/api/watchlist', watchlistRouter)
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: new Date() })
 })

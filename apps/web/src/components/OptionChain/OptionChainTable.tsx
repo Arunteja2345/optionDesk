@@ -7,6 +7,8 @@ interface Props {
   maxOI: number
   onTrade: (contract: any, side: 'BUY' | 'SELL') => void
   onAddToBasket?: (contract: any, side: 'BUY' | 'SELL') => void
+  onAddToWatchlist?: (contract: any) => void
+  watchedIds?: Set<string>
 }
 
 function getATMIndex(strikes: OptionStrike[], ltp: number) {
@@ -42,6 +44,8 @@ export function OptionChainTable({
   maxOI,
   onTrade,
   onAddToBasket,
+  onAddToWatchlist,
+  watchedIds,
 }: Props) {
   const atmIdx = useMemo(
     () => getATMIndex(strikes, underlyingLtp),
@@ -87,13 +91,13 @@ export function OptionChainTable({
           {strikes.map((strike, i) => {
             const isATM = i === atmIdx
             const { ceITM, peITM } = getMoneyness(strike, underlyingLtp)
+
             const ce = strike.ce
             const pe = strike.pe
+
             const ceChange = ce?.liveData?.dayChangePerc ?? 0
             const peChange = pe?.liveData?.dayChangePerc ?? 0
 
-            // Merge strikePrice into contract objects so downstream
-            // handlers always have access to it
             const ceWithStrike = ce ? { ...ce, strikePrice: strike.strikePrice } : ce
             const peWithStrike = pe ? { ...pe, strikePrice: strike.strikePrice } : pe
 
@@ -112,6 +116,7 @@ export function OptionChainTable({
                 ref={isATM ? atmRowRef : undefined}
                 className={`border-b hover:bg-surface-2 transition-colors ${rowBg}`}
               >
+
                 {/* CE OI */}
                 <td className={`px-2 py-1.5 text-right ${ceITMClass}`}>
                   <div className="flex items-center justify-end gap-1">
@@ -136,9 +141,28 @@ export function OptionChainTable({
                   </span>
                 </td>
 
-                {/* CE LTP */}
+                {/* ✅ CE LTP with Watchlist */}
                 <td className={`px-2 py-1.5 text-right ${ceITMClass}`}>
                   <div className="flex items-center justify-end gap-1">
+
+                    {onAddToWatchlist && (
+                      <button
+                        onClick={() => onAddToWatchlist(ceWithStrike)}
+                        className={`text-[10px] px-1 ${
+                          watchedIds?.has(ceWithStrike?.growwContractId ?? '')
+                            ? 'text-accent'
+                            : 'text-gray-600 hover:text-accent'
+                        }`}
+                        title={
+                          watchedIds?.has(ceWithStrike?.growwContractId ?? '')
+                            ? 'Already watching'
+                            : 'Add to watchlist'
+                        }
+                      >
+                        {watchedIds?.has(ceWithStrike?.growwContractId ?? '') ? '★' : '☆'}
+                      </button>
+                    )}
+
                     {onAddToBasket && (
                       <button
                         onClick={() => onAddToBasket(ceWithStrike, 'BUY')}
@@ -148,6 +172,7 @@ export function OptionChainTable({
                         +B
                       </button>
                     )}
+
                     <span
                       className={`cursor-pointer hover:text-buy font-semibold ${
                         ceITM ? 'text-white' : 'text-gray-500'
@@ -171,9 +196,7 @@ export function OptionChainTable({
                   isATM ? 'text-accent' : 'text-white'
                 }`}>
                   {(strike.strikePrice / 100).toFixed(0)}
-                  {isATM && (
-                    <span className="ml-1 text-[10px] text-accent">ATM</span>
-                  )}
+                  {isATM && <span className="ml-1 text-[10px] text-accent">ATM</span>}
                 </td>
 
                 {/* PE Change */}
@@ -183,9 +206,28 @@ export function OptionChainTable({
                   {peChange >= 0 ? '+' : ''}{peChange.toFixed(2)}%
                 </td>
 
-                {/* PE LTP */}
+                {/* ✅ PE LTP with Watchlist */}
                 <td className={`px-2 py-1.5 ${peITMClass}`}>
                   <div className="flex items-center gap-1">
+
+                    {onAddToWatchlist && (
+                      <button
+                        onClick={() => onAddToWatchlist(peWithStrike)}
+                        className={`text-[10px] px-1 ${
+                          watchedIds?.has(peWithStrike?.growwContractId ?? '')
+                            ? 'text-accent'
+                            : 'text-gray-600 hover:text-accent'
+                        }`}
+                        title={
+                          watchedIds?.has(peWithStrike?.growwContractId ?? '')
+                            ? 'Already watching'
+                            : 'Add to watchlist'
+                        }
+                      >
+                        {watchedIds?.has(peWithStrike?.growwContractId ?? '') ? '★' : '☆'}
+                      </button>
+                    )}
+
                     {onAddToBasket && (
                       <button
                         onClick={() => onAddToBasket(peWithStrike, 'BUY')}
@@ -195,6 +237,7 @@ export function OptionChainTable({
                         +B
                       </button>
                     )}
+
                     <span
                       className={`cursor-pointer hover:text-sell font-semibold ${
                         peITM ? 'text-white' : 'text-gray-500'
@@ -229,6 +272,7 @@ export function OptionChainTable({
                     <OIBar value={pe?.liveData?.oi ?? 0} max={maxOI} />
                   </div>
                 </td>
+
               </tr>
             )
           })}

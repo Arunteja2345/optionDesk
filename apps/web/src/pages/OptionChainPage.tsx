@@ -7,6 +7,11 @@ import { BasketPanel } from '../components/Basket/BasketPanel'
 import type { BasketLeg } from '../components/Basket/BasketPanel'
 import { useAuthStore } from '../stores/useAuthStore'
 
+// ✅ NEW IMPORTS
+import { useWatchlist } from '../hooks/useWatchlist'
+import { WatchlistPanel } from '../components/Watchlist/WatchlistPanel'
+import toast from 'react-hot-toast'
+
 type IndexName = 'nifty' | 'banknifty' | 'sensex'
 
 const INDEX_LABELS: Record<IndexName, string> = {
@@ -17,10 +22,12 @@ const INDEX_LABELS: Record<IndexName, string> = {
 
 export function OptionChainPage() {
   const { user } = useAuthStore()
+
   const [selectedIndex, setSelectedIndex] = useState<IndexName>('nifty')
   const [selectedExpiry, setSelectedExpiry] = useState('')
   const [expiries, setExpiries] = useState<string[]>([])
   const [loadingExpiries, setLoadingExpiries] = useState(false)
+
   const [orderModal, setOrderModal] = useState<{
     contract: any
     side: 'BUY' | 'SELL'
@@ -29,11 +36,16 @@ export function OptionChainPage() {
     strikePrice: number
     optionType: 'CE' | 'PE'
   } | null>(null)
+
   const [basketOpen, setBasketOpen] = useState(false)
   const [basketLegs, setBasketLegs] = useState<BasketLeg[]>([])
 
-  // Step 1 — fetch expiries via HTTP when index changes
-  // This runs FIRST, sets expiry, then the WebSocket hook fires
+  // ✅ WATCHLIST STATE
+  const { add: addToWatchlist, isWatched, items: watchlistItems } = useWatchlist()
+  const [watchlistOpen, setWatchlistOpen] = useState(false)
+  const watchedIds = new Set(watchlistItems.map(i => i.contractId))
+
+  // Fetch expiries
   useEffect(() => {
     setSelectedExpiry('')
     setExpiries([])
@@ -44,11 +56,10 @@ export function OptionChainPage() {
         const dates: string[] = data?.aggregatedDetails?.expiryDates ?? []
         const current: string = data?.aggregatedDetails?.currentExpiry ?? dates[0] ?? ''
         setExpiries(dates)
-        setSelectedExpiry(current)  // ← this triggers the WebSocket to subscribe
+        setSelectedExpiry(current)
       })
       .catch(err => {
         console.error('Failed to load expiries:', err)
-        // Hardcode a fallback expiry so we don't get stuck
         const fallback = '2026-04-28'
         setExpiries([fallback])
         setSelectedExpiry(fallback)
@@ -56,13 +67,12 @@ export function OptionChainPage() {
       .finally(() => setLoadingExpiries(false))
   }, [selectedIndex])
 
-  // Step 2 — WebSocket hook only runs when expiry is set
+  // WebSocket data
   const { data, connected, lastUpdated } = useOptionChain(
     selectedIndex,
-    selectedExpiry   // empty string until Step 1 completes → hook does nothing
+    selectedExpiry
   )
 
-  // When new data arrives, sync expiry list
   useEffect(() => {
     if (data?.aggregatedDetails?.expiryDates?.length) {
       setExpiries(data.aggregatedDetails.expiryDates)
@@ -88,7 +98,9 @@ export function OptionChainPage() {
       alert('Maximum 4 legs allowed in a basket')
       return
     }
+
     const optionType = contract.growwContractId?.includes('CE') ? 'CE' : 'PE'
+
     const newLeg: BasketLeg = {
       id: crypto.randomUUID(),
       contractId: contract.growwContractId ?? '',
@@ -101,8 +113,35 @@ export function OptionChainPage() {
       quantity: 1,
       ltp: contract.liveData?.ltp ?? 0,
     }
+
     setBasketLegs(prev => [...prev, newLeg])
     setBasketOpen(true)
+  }
+
+  // ✅ WATCHLIST HANDLER
+  const handleAddToWatchlist = async (contract: any) => {
+    if (!contract) return
+
+    const optionType = contract.growwContractId?.includes('CE') ? 'CE' : 'PE'
+
+    if (isWatched(contract.growwContractId)) {
+      toast('Already in watchlist', { icon: '★' })
+      return
+    }
+
+    const result = await addToWatchlist({
+      contractId: contract.growwContractId,
+      indexName: selectedIndex,
+      strikePrice: contract.strikePrice ?? 0,
+      optionType,
+      expiryDate: selectedExpiry,
+    })
+
+    if (result.success) {
+      toast.success('Added to watchlist')
+    } else {
+      toast.error(result.error ?? 'Failed to add')
+    }
   }
 
   return (
@@ -114,9 +153,7 @@ export function OptionChainPage() {
         {/* Index selector */}
         <select
           value={selectedIndex}
-          onChange={e => {
-            setSelectedIndex(e.target.value as IndexName)
-          }}
+          onChange={e => setSelectedIndex(e.target.value as IndexName)}
           className="bg-surface-2 border border-surface-3 text-white text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer"
         >
           {(Object.keys(INDEX_LABELS) as IndexName[]).map(idx => (
@@ -131,15 +168,13 @@ export function OptionChainPage() {
           disabled={loadingExpiries || expiries.length === 0}
           className="bg-surface-2 border border-surface-3 text-white text-xs rounded-lg px-3 py-1.5 outline-none cursor-pointer disabled:opacity-40"
         >
-          {expiries.length === 0 && (
-            <option value="">Loading...</option>
-          )}
+          {expiries.length === 0 && <option value="">Loading...</option>}
           {expiries.map(exp => (
             <option key={exp} value={exp}>{exp}</option>
           ))}
         </select>
 
-        {/* Underlying price */}
+        {/* Underlying */}
         {data && (
           <div className="flex items-center gap-2 pl-2 border-l border-surface-3">
             <span className="text-gray-500 text-xs">{INDEX_LABELS[selectedIndex]}</span>
@@ -155,7 +190,7 @@ export function OptionChainPage() {
           </div>
         )}
 
-        {/* Live indicator */}
+        {/* Live */}
         <div className="flex items-center gap-1.5">
           <div className={`w-1.5 h-1.5 rounded-full ${
             connected ? 'bg-buy animate-pulse' : 'bg-sell'
@@ -163,54 +198,64 @@ export function OptionChainPage() {
           <span className="text-gray-500 text-[10px]">
             {connected ? 'Live' : 'Disconnected'}
           </span>
-          {lastUpdated && (
-            <span className="text-gray-600 text-[10px]">
-              · {lastUpdated.toLocaleTimeString('en-IN', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-              })}
-            </span>
-          )}
         </div>
 
-        {/* Basket button */}
+        {/* Basket */}
         <button
           onClick={() => setBasketOpen(true)}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-surface-2 hover:bg-accent/20 border border-surface-3 hover:border-accent/40 text-gray-300 hover:text-accent rounded-lg text-xs font-semibold transition-colors"
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-surface-2 hover:bg-accent/20 border border-surface-3 hover:border-accent/40 text-gray-300 hover:text-accent rounded-lg text-xs font-semibold"
         >
-          <span>🧺</span>
-          <span>Basket</span>
-          {basketLegs.length > 0 && (
-            <span className="bg-accent text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold leading-none">
-              {basketLegs.length}
+          🧺 Basket
+        </button>
+
+        {/* ✅ WATCHLIST BUTTON */}
+        <button
+          onClick={() => setWatchlistOpen(!watchlistOpen)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-semibold ${
+            watchlistOpen
+              ? 'bg-accent/20 border-accent/40 text-accent'
+              : 'bg-surface-2 border-surface-3 text-gray-300 hover:text-accent hover:border-accent/40'
+          }`}
+        >
+          ★ Watchlist
+          {watchlistItems.length > 0 && (
+            <span className="bg-accent text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold">
+              {watchlistItems.length}
             </span>
           )}
         </button>
       </div>
 
-      {/* Option chain table */}
-      <div className="flex-1 overflow-hidden">
-        {!selectedExpiry || !data ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500">
-            <div className="w-6 h-6 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-            <span className="text-sm">
-              {!selectedExpiry
-                ? 'Loading expiries...'
-                : connected
-                  ? 'Loading option chain...'
-                  : 'Connecting to live feed...'
-              }
-            </span>
+      {/* ✅ MAIN + SIDEBAR LAYOUT */}
+      <div className="flex-1 overflow-hidden flex">
+
+        {/* Table */}
+        <div className="flex-1 overflow-hidden">
+          {!selectedExpiry || !data ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500">
+              <div className="w-6 h-6 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+              <span className="text-sm">
+                {!selectedExpiry ? 'Loading expiries...' : 'Loading option chain...'}
+              </span>
+            </div>
+          ) : (
+            <OptionChainTable
+              strikes={data.optionContracts}
+              underlyingLtp={data.underlyingLtp}
+              maxOI={data.aggregatedDetails.maxOI}
+              onTrade={handleTrade}
+              onAddToBasket={handleAddToBasket}
+              onAddToWatchlist={handleAddToWatchlist}   // ✅ NEW
+              watchedIds={watchedIds}                   // ✅ NEW
+            />
+          )}
+        </div>
+
+        {/* ✅ WATCHLIST SIDEBAR */}
+        {watchlistOpen && (
+          <div className="w-64 border-l border-surface-3 bg-surface flex-shrink-0">
+            <WatchlistPanel />
           </div>
-        ) : (
-          <OptionChainTable
-            strikes={data.optionContracts}
-            underlyingLtp={data.underlyingLtp}
-            maxOI={data.aggregatedDetails.maxOI}
-            onTrade={handleTrade}
-            onAddToBasket={handleAddToBasket}
-          />
         )}
       </div>
 
