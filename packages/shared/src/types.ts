@@ -25,6 +25,7 @@ export interface Greeks {
 export interface OptionContract {
   growwContractId: string
   displayName: string
+  longDisplayName?: string
   token: string
   marketLot: number
   liveData: LiveData

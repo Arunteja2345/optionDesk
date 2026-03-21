@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/useAuthStore'
 import { useWatchlistStore } from '../stores/useWatchlistStore' // ✅ NEW
 import { AddBalanceModal } from './Balance/AddBalanceModal'
 import { SearchBar } from './Search/SearchBar' // ✅ NEW
+import { ThemeToggle } from './ThemeToggle'
 
 export function Navbar() {
   const location = useLocation()
@@ -87,6 +88,7 @@ export function Navbar() {
             </button>
           </div>
 
+          <ThemeToggle />
           {/* User */}
           <span className="text-xs text-gray-500">{user?.name}</span>
 

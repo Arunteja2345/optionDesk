@@ -1,3 +1,32 @@
+// Theme logic tests
+function applyTheme(theme: 'dark' | 'light'): string[] {
+  if (theme === 'light') return ['light']
+  return ['dark']
+}
+
+function toggleTheme(current: 'dark' | 'light'): 'dark' | 'light' {
+  return current === 'dark' ? 'light' : 'dark'
+}
+
+describe('Theme toggle', () => {
+  test('dark toggles to light', () => {
+    expect(toggleTheme('dark')).toBe('light')
+  })
+
+  test('light toggles to dark', () => {
+    expect(toggleTheme('light')).toBe('dark')
+  })
+
+  test('light theme adds light class', () => {
+    expect(applyTheme('light')).toContain('light')
+  })
+
+  test('dark theme adds dark class', () => {
+    expect(applyTheme('dark')).toContain('dark')
+  })
+})
+
+
 function parseSearchQuery(query: string): {
   indexName: string | null
   strikeDisplay: number | null

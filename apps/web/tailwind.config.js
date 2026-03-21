@@ -4,9 +4,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        surface: '#1a1a1a',
-        'surface-2': '#242424',
-        'surface-3': '#2a2a2a',
+        // Dark theme surfaces
+        surface: {
+          DEFAULT: 'var(--surface)',
+          2: 'var(--surface-2)',
+          3: 'var(--surface-3)',
+        },
         buy: '#26A69A',
         sell: '#EF5350',
         accent: '#387ED1',
