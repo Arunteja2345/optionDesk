@@ -16,8 +16,6 @@
   --buy:       #26A69A;
   --sell:      #EF5350;
   --accent:    #387ED1;
-
-  /* ITM cell backgrounds */
   --ce-itm-bg: #1a1f1a;
   --pe-itm-bg: #1a1a1f;
   --otm-bg:    #111111;
@@ -35,7 +33,6 @@
   --buy:       #0d9488;
   --sell:      #dc2626;
   --accent:    #2563eb;
-
   --ce-itm-bg: #f0fdf4;
   --pe-itm-bg: #eff6ff;
   --otm-bg:    #fafafa;
@@ -55,7 +52,7 @@ body {
 ::-webkit-scrollbar-track { background: var(--surface); }
 ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 2px; }
 
-/* Surface utility classes that respond to theme */
+/* Surface utility classes */
 .bg-surface   { background-color: var(--surface) !important; }
 .bg-surface-2 { background-color: var(--surface-2) !important; }
 .bg-surface-3 { background-color: var(--surface-3) !important; }
@@ -68,13 +65,8 @@ body {
 .pe-itm-bg { background-color: var(--pe-itm-bg) !important; }
 .otm-bg    { background-color: var(--otm-bg) !important; }
 
-/* Light mode: invert some text colors */
+/* Light mode text overrides */
 .light .text-gray-400 { color: #555 !important; }
 .light .text-gray-500 { color: #777 !important; }
 .light .text-gray-600 { color: #999 !important; }
 .light .text-white    { color: #111 !important; }
-.light .bg-\[#0f0f0f\] { background-color: #f0f2f5 !important; }
-.light .bg-\[#141414\] { background-color: #ffffff !important; }
-.light .bg-\[#111111\] { background-color: #fafafa !important; }
-.light .bg-\[#1a1f1a\] { background-color: #f0fdf4 !important; }
-.light .bg-\[#1a1a1f\] { background-color: #eff6ff !important; }
