@@ -2,6 +2,7 @@ import { db } from '../db/db'
 import { orders, positions, users } from '../db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { getCachedChain, fetchOptionChain } from './OptionChainService'
+import { calculateBrokerage, BrokerageBreakdown } from '../utils/brokerage'
 import type { IndexName } from '../types'
 
 export interface PlaceOrderInput {
@@ -98,6 +99,15 @@ export async function placeOrder(input: PlaceOrderInput) {
     underlyingLtp
   )
 
+  const brokerageInfo = calculateBrokerage(
+    input.side,
+    input.quantity,
+    lotSize,
+    executionPrice
+  )
+
+  const totalDeduction = marginInfo.requiredAmount + brokerageInfo.total
+
   const [user] = await db
     .select({ balance: users.balance, id: users.id })
     .from(users)
@@ -105,9 +115,10 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   if (!user) throw new Error('User not found')
 
-  if (Number(user.balance) < marginInfo.requiredAmount) {
+  if (Number(user.balance) < totalDeduction) {
     throw new Error(
-      `Insufficient balance. Required: ₹${marginInfo.requiredAmount.toFixed(2)}, ` +
+      `Insufficient balance. Required: ₹${totalDeduction.toFixed(2)} ` +
+      `(₹${marginInfo.requiredAmount.toFixed(2)} + ₹${brokerageInfo.total.toFixed(2)} charges), ` +
       `Available: ₹${Number(user.balance).toFixed(2)}`
     )
   }
@@ -129,11 +140,11 @@ export async function placeOrder(input: PlaceOrderInput) {
   if (input.orderType === 'MARKET') {
     await executeOrder(
       order.id, executionPrice, input.userId,
-      input.side, marginInfo, input, lotSize
+      input.side, marginInfo, brokerageInfo, input, lotSize
     )
   }
 
-  return { order, marginInfo }
+  return { order, marginInfo, brokerageInfo }
 }
 
 async function executeOrder(
@@ -142,6 +153,7 @@ async function executeOrder(
   userId: string,
   side: 'BUY' | 'SELL',
   marginInfo: MarginInfo,
+  brokerageInfo: BrokerageBreakdown,
   input: PlaceOrderInput,
   lotSize: number
 ) {
@@ -149,8 +161,11 @@ async function executeOrder(
     .set({ status: 'executed', executedAt: new Date() })
     .where(eq(orders.id, orderId))
 
+  // Deduct margin + brokerage
+  const totalDeduction = marginInfo.requiredAmount + brokerageInfo.total
+
   await db.update(users)
-    .set({ balance: sql`balance - ${marginInfo.requiredAmount}` })
+    .set({ balance: sql`balance - ${totalDeduction}` })
     .where(eq(users.id, userId))
 
   const totalQtyUnits = input.quantity * lotSize
@@ -219,26 +234,51 @@ export async function closePosition(positionId: string, userId: string) {
   const currentLtp = contract?.liveData?.ltp ?? Number(position.avgBuyPrice)
   const avgPrice = Number(position.avgBuyPrice)
   const originallyBlocked = Number(position.marginBlocked)
+  const lotSize = chain?.aggregatedDetails?.lotSize ?? 65
+  const lots = position.quantity / lotSize
+
+  // Brokerage on closing trade (opposite side)
+  const closingSide = position.side === 'BUY' ? 'SELL' : 'BUY'
+  const closingBrokerage = calculateBrokerage(closingSide, lots, lotSize, currentLtp)
 
   let pnl: number
   let refund: number
 
   if (position.side === 'BUY') {
+    // Originally bought: get back current value
     pnl = (currentLtp - avgPrice) * position.quantity
     refund = currentLtp * position.quantity
   } else {
+    // Originally sold: get back blocked margin ± P&L
     pnl = (avgPrice - currentLtp) * position.quantity
     refund = Math.max(0, originallyBlocked + pnl)
   }
 
-  console.log(`Close ${positionId}: side=${position.side} qty=${position.quantity} avg=${avgPrice} ltp=${currentLtp} pnl=${pnl} blocked=${originallyBlocked} refund=${refund}`)
+  // Deduct closing brokerage from refund
+  const finalRefund = Math.max(0, refund - closingBrokerage.total)
+
+  console.log(`Close ${positionId}:`, {
+    side: position.side,
+    qty: position.quantity,
+    avgPrice,
+    currentLtp,
+    pnl,
+    originallyBlocked,
+    refund,
+    closingBrokerage: closingBrokerage.total,
+    finalRefund,
+  })
 
   await db.update(users)
-    .set({ balance: sql`balance + ${refund}` })
+    .set({ balance: sql`balance + ${finalRefund}` })
     .where(eq(users.id, userId))
 
   await db.update(positions)
-    .set({ status: 'closed', closedAt: new Date(), closePrice: String(currentLtp) })
+    .set({
+      status: 'closed',
+      closedAt: new Date(),
+      closePrice: String(currentLtp),
+    })
     .where(eq(positions.id, positionId))
 
   const [updated] = await db
@@ -246,5 +286,11 @@ export async function closePosition(positionId: string, userId: string) {
     .from(users)
     .where(eq(users.id, userId))
 
-  return { pnl, closePrice: currentLtp, refund, newBalance: Number(updated.balance) }
+  return {
+    pnl,
+    closePrice: currentLtp,
+    refund: finalRefund,
+    brokerageOnClose: closingBrokerage.total,
+    newBalance: Number(updated.balance),
+  }
 }
