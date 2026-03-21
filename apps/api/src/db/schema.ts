@@ -30,6 +30,7 @@ export const positions = pgTable('positions', {
   avgBuyPrice: numeric('avg_buy_price', { precision: 10, scale: 2 }).notNull(),
   side: orderSideEnum('side').notNull(),
   status: positionStatusEnum('status').default('open').notNull(),
+  marginBlocked: numeric('margin_blocked', { precision: 14, scale: 2 }).default('0').notNull(), // ADD THIS
   openedAt: timestamp('opened_at', { withTimezone: true }).defaultNow(),
   closedAt: timestamp('closed_at', { withTimezone: true }),
   closePrice: numeric('close_price', { precision: 10, scale: 2 }),

@@ -33,9 +33,7 @@ export function calculateMargin(
   underlyingLtp: number
 ): MarginInfo {
   if (side === 'BUY') {
-    return {
-      requiredAmount: lots * lotSize * ltp
-    }
+    return { requiredAmount: lots * lotSize * ltp }
   }
 
   const spanMargin = 0.05 * lotSize * underlyingLtp * lots
@@ -54,12 +52,10 @@ export function calculateMargin(
 }
 
 export async function placeOrder(input: PlaceOrderInput) {
-  // Try cache first, fetch live if not available
   let chain = getCachedChain(input.indexName, input.expiryDate)
 
   if (!chain) {
     try {
-      console.log(`Cache miss for ${input.indexName}:${input.expiryDate} — fetching live`)
       chain = await fetchOptionChain(input.indexName, input.expiryDate)
     } catch (err) {
       console.error('Failed to fetch chain for order:', err)
@@ -71,7 +67,6 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   if (chain) {
     underlyingLtp = chain.underlyingLtp
-
     const strike = chain.optionContracts.find(
       (s: any) => s.strikePrice === input.strikePrice
     )
@@ -79,14 +74,13 @@ export async function placeOrder(input: PlaceOrderInput) {
     currentLtp = contract?.liveData?.ltp ?? 0
   }
 
-  // Last resort — use limit price if provided
   if (currentLtp === 0 && input.limitPrice && input.limitPrice > 0) {
     currentLtp = input.limitPrice
   }
 
   if (currentLtp === 0 && input.orderType === 'MARKET') {
     throw new Error(
-      `Cannot place market order — live price unavailable for strike ${input.strikePrice / 100} ${input.optionType}`
+      `Cannot place market order — live price unavailable for ${input.strikePrice / 100} ${input.optionType}`
     )
   }
 
@@ -113,8 +107,7 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   if (Number(user.balance) < marginInfo.requiredAmount) {
     throw new Error(
-      `Insufficient balance. ` +
-      `Required: ₹${marginInfo.requiredAmount.toFixed(2)}, ` +
+      `Insufficient balance. Required: ₹${marginInfo.requiredAmount.toFixed(2)}, ` +
       `Available: ₹${Number(user.balance).toFixed(2)}`
     )
   }
@@ -135,13 +128,8 @@ export async function placeOrder(input: PlaceOrderInput) {
 
   if (input.orderType === 'MARKET') {
     await executeOrder(
-      order.id,
-      executionPrice,
-      input.userId,
-      input.side,
-      marginInfo,
-      input,
-      lotSize
+      order.id, executionPrice, input.userId,
+      input.side, marginInfo, input, lotSize
     )
   }
 
@@ -182,8 +170,14 @@ async function executeOrder(
       (Number(existing.avgBuyPrice) * existing.quantity + price * totalQtyUnits)
       / newTotalQty
     )
+    const newMarginBlocked = Number(existing.marginBlocked) + marginInfo.requiredAmount
+
     await db.update(positions)
-      .set({ quantity: newTotalQty, avgBuyPrice: String(newAvgPrice) })
+      .set({
+        quantity: newTotalQty,
+        avgBuyPrice: String(newAvgPrice),
+        marginBlocked: String(newMarginBlocked),
+      })
       .where(eq(positions.id, existing.id))
   } else {
     await db.insert(positions).values({
@@ -196,6 +190,7 @@ async function executeOrder(
       quantity: totalQtyUnits,
       avgBuyPrice: String(price),
       side,
+      marginBlocked: String(marginInfo.requiredAmount),
     })
   }
 }
@@ -208,18 +203,10 @@ export async function closePosition(positionId: string, userId: string) {
     throw new Error('Position not found or already closed')
   }
 
-  let chain = getCachedChain(
-    position.indexName as IndexName,
-    position.expiryDate
-  )
-
-  // Fetch live if not cached
+  let chain = getCachedChain(position.indexName as IndexName, position.expiryDate)
   if (!chain) {
     try {
-      chain = await fetchOptionChain(
-        position.indexName as IndexName,
-        position.expiryDate
-      )
+      chain = await fetchOptionChain(position.indexName as IndexName, position.expiryDate)
     } catch (err) {
       console.error('Failed to fetch chain for close:', err)
     }
@@ -231,40 +218,27 @@ export async function closePosition(positionId: string, userId: string) {
   const contract = position.optionType === 'CE' ? strike?.ce : strike?.pe
   const currentLtp = contract?.liveData?.ltp ?? Number(position.avgBuyPrice)
   const avgPrice = Number(position.avgBuyPrice)
-  const lotSize = chain?.aggregatedDetails?.lotSize ?? 65
-  const lots = position.quantity / lotSize
-  const underlyingLtp = chain?.underlyingLtp ?? 0
+  const originallyBlocked = Number(position.marginBlocked)
 
-  let refund: number
   let pnl: number
+  let refund: number
 
   if (position.side === 'BUY') {
     pnl = (currentLtp - avgPrice) * position.quantity
     refund = currentLtp * position.quantity
   } else {
     pnl = (avgPrice - currentLtp) * position.quantity
-
-    const spanMargin = 0.05 * lotSize * underlyingLtp * lots
-    const exposureMargin = 0.02 * lotSize * underlyingLtp * lots
-    const totalMargin = spanMargin + exposureMargin
-    const premiumReceived = lots * lotSize * avgPrice
-    const originallyBlocked = Math.max(0, totalMargin - premiumReceived)
-
-    refund = originallyBlocked + pnl
+    refund = Math.max(0, originallyBlocked + pnl)
   }
 
-  const actualRefund = Math.max(0, refund)
+  console.log(`Close ${positionId}: side=${position.side} qty=${position.quantity} avg=${avgPrice} ltp=${currentLtp} pnl=${pnl} blocked=${originallyBlocked} refund=${refund}`)
 
   await db.update(users)
-    .set({ balance: sql`balance + ${actualRefund}` })
+    .set({ balance: sql`balance + ${refund}` })
     .where(eq(users.id, userId))
 
   await db.update(positions)
-    .set({
-      status: 'closed',
-      closedAt: new Date(),
-      closePrice: String(currentLtp),
-    })
+    .set({ status: 'closed', closedAt: new Date(), closePrice: String(currentLtp) })
     .where(eq(positions.id, positionId))
 
   const [updated] = await db
@@ -272,10 +246,5 @@ export async function closePosition(positionId: string, userId: string) {
     .from(users)
     .where(eq(users.id, userId))
 
-  return {
-    pnl,
-    closePrice: currentLtp,
-    refund: actualRefund,
-    newBalance: Number(updated.balance),
-  }
+  return { pnl, closePrice: currentLtp, refund, newBalance: Number(updated.balance) }
 }
