@@ -88,3 +88,5 @@ function parseGrowwResponse(raw: any): OptionChainResponse {
     underlyingChangePerc: raw.company?.liveData?.dayChangePerc ?? 0,
   }
 }
+
+export {cache};

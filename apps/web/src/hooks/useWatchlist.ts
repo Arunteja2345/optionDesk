@@ -1,55 +1,24 @@
-import { useState, useEffect, useCallback } from 'react'
-import { api } from '../services/api'
+import { useEffect } from 'react'
+import { useWatchlistStore } from '../stores/useWatchlistStore'
 
-export interface WatchlistItem {
-  id: string
-  contractId: string
-  indexName: string
-  strikePrice: number
-  optionType: 'CE' | 'PE'
-  expiryDate: string
-  addedAt: string
-}
+export type { WatchlistItem } from '../stores/useWatchlistStore'
 
 export function useWatchlist() {
-  const [items, setItems] = useState<WatchlistItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const store = useWatchlistStore()
 
-  const fetch = useCallback(async () => {
-    setLoading(true)
-    try {
-      const { data } = await api.get('/api/watchlist')
-      setItems(data)
-    } catch (e) {
-      console.error('Failed to fetch watchlist:', e)
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    // Fetch only once (prevents duplicate API calls)
+    if (store.items.length === 0) {
+      store.fetch()
     }
   }, [])
 
-  useEffect(() => { fetch() }, [fetch])
-
-  const add = async (item: Omit<WatchlistItem, 'id' | 'addedAt'>) => {
-    try {
-      const { data } = await api.post('/api/watchlist', item)
-      setItems(prev => [...prev, data])
-      return { success: true }
-    } catch (e: any) {
-      return { success: false, error: e.response?.data?.error || 'Failed to add' }
-    }
+  return {
+    items: store.items,
+    loading: store.loading,
+    add: store.add,
+    remove: store.remove,
+    isWatched: store.isWatched,
+    refresh: store.fetch, // optional manual refresh
   }
-
-  const remove = async (id: string) => {
-    try {
-      await api.delete(`/api/watchlist/${id}`)
-      setItems(prev => prev.filter(i => i.id !== id))
-    } catch (e) {
-      console.error('Failed to remove:', e)
-    }
-  }
-
-  const isWatched = (contractId: string) =>
-    items.some(i => i.contractId === contractId)
-
-  return { items, loading, add, remove, isWatched, refresh: fetch }
 }

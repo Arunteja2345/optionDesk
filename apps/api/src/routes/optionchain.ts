@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express'
-import { fetchOptionChain, getCachedChain } from '../services/OptionChainService'
 import type { IndexName } from '../types'
+import { fetchOptionChain, getCachedChain, getExpiryDates, cache } from '../services/OptionChainService'
 
 const router = Router()
 
@@ -52,6 +52,93 @@ router.get('/:index/expiries', async (req: Request, res: Response): Promise<void
     res.status(500).json({ error: 'Failed to fetch expiries' })
   }
 })
+
+// GET /api/optionchain/search?q=nifty+25000
+router.get('/search', async (req: Request, res: Response): Promise<void> => {
+  const query = (req.query.q as string ?? '').toLowerCase().trim()
+  if (!query || query.length < 3) {
+    res.json([])
+    return
+  }
+
+  // Parse query: e.g. "nifty 25000" or "banknifty 23500"
+  const parts = query.split(/\s+/)
+  const indexPart = parts[0]
+  const strikePart = parts[1]
+
+  // Map to index name
+  const indexMap: Record<string, string> = {
+    nifty: 'nifty',
+    'bank nifty': 'banknifty',
+    banknifty: 'banknifty',
+    sensex: 'sensex',
+  }
+  const indexName = indexMap[indexPart] as IndexName
+  if (!indexName) {
+    res.json([])
+    return
+  }
+
+  const strikeDisplay = strikePart ? parseInt(strikePart) : null
+  if (!strikeDisplay || isNaN(strikeDisplay)) {
+    res.json([])
+    return
+  }
+
+  const strikeRaw = strikeDisplay * 100
+
+  // Search across all cached expiries for this index
+  const results: any[] = []
+
+  for (const [key, chain] of cache.entries()) {
+    if (!key.startsWith(indexName)) continue
+
+    const expiry = key.split(':')[1]
+    const strike = chain.optionContracts.find(
+      (s: any) => s.strikePrice === strikeRaw
+    )
+    if (!strike) continue
+
+    if (strike.ce) {
+      results.push({
+        contractId: strike.ce.growwContractId,
+        displayName: strike.ce.displayName,
+        indexName,
+        strikePrice: strikeRaw,
+        displayStrike: strikeDisplay,
+        optionType: 'CE',
+        expiryDate: expiry,
+        ltp: strike.ce.liveData?.ltp ?? 0,
+        iv: strike.ce.greeks?.iv ?? 0,
+        delta: strike.ce.greeks?.delta ?? 0,
+        oi: strike.ce.liveData?.oi ?? 0,
+        dayChangePerc: strike.ce.liveData?.dayChangePerc ?? 0,
+      })
+    }
+    if (strike.pe) {
+      results.push({
+        contractId: strike.pe.growwContractId,
+        displayName: strike.pe.displayName,
+        indexName,
+        strikePrice: strikeRaw,
+        displayStrike: strikeDisplay,
+        optionType: 'PE',
+        expiryDate: expiry,
+        ltp: strike.pe.liveData?.ltp ?? 0,
+        iv: strike.pe.greeks?.iv ?? 0,
+        delta: strike.pe.greeks?.delta ?? 0,
+        oi: strike.pe.liveData?.oi ?? 0,
+        dayChangePerc: strike.pe.liveData?.dayChangePerc ?? 0,
+      })
+    }
+  }
+
+  // Sort: closest expiry first
+  results.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))
+
+  res.json(results.slice(0, 20))
+})
+
 
 // GET /api/optionchain/:index/:expiry
 router.get('/:index/:expiry', async (req: Request, res: Response): Promise<void> => {

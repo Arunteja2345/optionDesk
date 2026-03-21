@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { HomePage } from './pages/HomePage'
 import { useAuthStore } from './stores/useAuthStore'
+import { OptionDetailPage } from './pages/OptionDetailPage'
 
 function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { token } = useAuthStore()
@@ -52,6 +53,10 @@ export default function App() {
         <Route path="/orders" element={
           <ProtectedLayout><OrderPage /></ProtectedLayout>
         } />
+        <Route
+          path="/option/:indexName/:strikePrice/:optionType/:expiryDate"
+          element={<ProtectedLayout><OptionDetailPage /></ProtectedLayout>}
+        />
 
         {/* Redirect root to home if not logged in, app if logged in */}
         <Route path="*" element={<Navigate to="/home" replace />} />

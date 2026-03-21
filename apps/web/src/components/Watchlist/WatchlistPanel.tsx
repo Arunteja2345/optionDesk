@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
-import { useWatchlist, WatchlistItem } from '../../hooks/useWatchlist'
+import { useEffect, useState } from 'react'
+import { useWatchlistStore } from '../../stores/useWatchlistStore'
 import { io, Socket } from 'socket.io-client'
+import { useNavigate } from 'react-router-dom'
 
 interface LiveData {
   ltp: number
@@ -9,10 +10,14 @@ interface LiveData {
 }
 
 export function WatchlistPanel() {
-  const { items, loading, remove } = useWatchlist()
+  const { items, loading, remove, fetch } = useWatchlistStore()
   const [liveData, setLiveData] = useState<Record<string, LiveData>>({})
+  const navigate = useNavigate()
 
-  // Subscribe to live updates for all watchlist items
+  useEffect(() => {
+    fetch()
+  }, [])
+
   useEffect(() => {
     if (items.length === 0) return
 
@@ -20,7 +25,6 @@ export function WatchlistPanel() {
       transports: ['websocket', 'polling']
     })
 
-    // Get unique rooms
     const rooms = [...new Set(
       items.map(i => `${i.indexName}:${i.expiryDate}`)
     )]
@@ -64,7 +68,7 @@ export function WatchlistPanel() {
     }
   }, [items])
 
-  if (loading) {
+  if (loading && items.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
         <div className="w-5 h-5 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
@@ -74,17 +78,19 @@ export function WatchlistPanel() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-surface-3 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-surface-3 flex items-center justify-between flex-shrink-0">
         <h2 className="text-white font-semibold text-sm">Watchlist</h2>
-        <span className="text-gray-500 text-xs">{items.length}/50</span>
+        <span className="text-gray-500 text-xs bg-surface-3 px-2 py-0.5 rounded-full">
+          {items.length}/50
+        </span>
       </div>
 
       {items.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2">
-          <span className="text-3xl">👁</span>
-          <p className="text-sm">No contracts watched</p>
-          <p className="text-xs text-gray-600 text-center px-4">
-            Click the <span className="text-accent">+W</span> button on any option to add it
+        <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2 px-4">
+          <span className="text-3xl">☆</span>
+          <p className="text-sm text-center">No contracts watched</p>
+          <p className="text-xs text-gray-600 text-center">
+            Click <span className="text-accent font-mono">☆</span> on any option to add it
           </p>
         </div>
       ) : (
@@ -97,9 +103,10 @@ export function WatchlistPanel() {
             return (
               <div
                 key={item.id}
-                className="px-4 py-3 border-b border-surface-3 hover:bg-surface-2 transition-colors group"
+                className="px-3 py-2.5 border-b border-surface-3 hover:bg-surface-2 transition-colors group cursor-pointer"
+                onClick={() => navigate(`/option/${item.indexName}/${item.strikePrice}/${item.optionType}/${item.expiryDate}`)}
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
@@ -113,10 +120,10 @@ export function WatchlistPanel() {
                         {item.indexName.toUpperCase()} {(item.strikePrice / 100).toFixed(0)}
                       </span>
                     </div>
-                    <p className="text-gray-500 text-[10px]">{item.expiryDate}</p>
+                    <p className="text-gray-600 text-[10px]">{item.expiryDate}</p>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <div className="text-right">
                       <p className="text-white font-mono text-xs font-semibold">
                         {live ? `₹${live.ltp.toFixed(2)}` : '—'}
@@ -131,9 +138,12 @@ export function WatchlistPanel() {
                     </div>
 
                     <button
-                      onClick={() => remove(item.id)}
-                      className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-sell transition-all text-sm w-5 h-5 flex items-center justify-center"
-                      title="Remove from watchlist"
+                      onClick={e => {
+                        e.stopPropagation()
+                        remove(item.id)
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-sell transition-all w-5 h-5 flex items-center justify-center text-base rounded hover:bg-sell/10"
+                      title="Remove"
                     >
                       ×
                     </button>
